@@ -15,9 +15,10 @@ cargo install packlet
 Or build from source:
 
 ```bash
-git clone https://github.com/yourusername/packlet
+git clone https://github.com/kirillleventcov/packlet
 cd packlet
 cargo build --release
+cargo install --path .
 ```
 
 ## Usage

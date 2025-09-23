@@ -167,7 +167,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             };
 
-            println!("✍️  Generating output...");
+            println!("Generating output...");
             let output_str = formatter.format(&graph, &file_contents)?;
 
             // Always write to a file
