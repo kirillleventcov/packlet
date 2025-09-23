@@ -26,7 +26,7 @@ pub trait LanguageAdapter: Send + Sync {
     ) -> Result<Option<ResolvedImport>>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ImportStatement {
     pub specifier: String,
     pub kind: ImportKind,
@@ -35,7 +35,7 @@ pub struct ImportStatement {
     pub raw: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum ImportKind {
     EsModule,
     CommonJs,

@@ -47,17 +47,6 @@ pub enum Commands {
         exclude: Option<Vec<String>>,
     },
 
-    /// Analyze dependencies without bundling
-    Analyze {
-        file: PathBuf,
-
-        #[arg(long)]
-        json: bool,
-
-        #[arg(long)]
-        stats: bool,
-    },
-
     /// Visualize dependency graph
     Graph {
         file: PathBuf,
@@ -194,13 +183,54 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             );
             println!("Tip: Use --output to specify a custom output location");
         }
-        Commands::Analyze { file, .. } => {
-            println!("Analyzing {}...", file.display());
-            println!("(Not implemented yet)");
-        }
-        Commands::Graph { file, .. } => {
-            println!("Generating graph for {}...", file.display());
-            println!("(Not implemented yet)");
+        Commands::Graph { file, format } => {
+            let entry_file = file.absolutize()?.to_path_buf();
+
+            println!("Generating graph for {}...", entry_file.display());
+
+            let fs_provider = Arc::new(core::fs::CachedFileSystem::new(Box::new(
+                core::fs::LocalFileSystem,
+            )));
+
+            let extension = entry_file
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let adapter = Arc::from(
+                core::language::get_adapter_for_extension(extension).ok_or_else(|| {
+                    anyhow::anyhow!("Unsupported file type: {}", entry_file.display())
+                })?,
+            );
+
+            let context = Arc::new(core::language::AnalysisContext {
+                fs: fs_provider.clone(),
+            });
+
+            let traverser = core::traverser::DependencyTraverser::new();
+
+            println!("Analyzing dependencies...");
+            let graph = traverser.traverse(&entry_file, adapter, context).await?;
+
+            let dep_count = graph
+                .adj_list
+                .values()
+                .map(|deps| deps.len())
+                .sum::<usize>();
+            println!("Found {} local dependencies", dep_count);
+
+            match format {
+                GraphFormat::Dot => {
+                    // Use the existing tree rendering logic from MarkdownFormatter
+                    let formatter = output::MarkdownFormatter;
+                    let tree_output = formatter.format_tree_only(&graph)?;
+                    println!("\n{}", tree_output);
+                }
+                GraphFormat::Json => {
+                    // JSON format for programmatic use
+                    let json_output = serde_json::to_string_pretty(&graph)?;
+                    println!("{}", json_output);
+                }
+            }
         }
     }
     Ok(())

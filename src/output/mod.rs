@@ -11,6 +11,13 @@ pub trait OutputFormatter: Send + Sync {
 pub struct MarkdownFormatter;
 
 impl MarkdownFormatter {
+    pub fn format_tree_only(&self, graph: &DependencyGraph) -> Result<String> {
+        let mut output = String::new();
+        let mut visited = HashMap::new();
+        self.write_tree_recursive(&mut output, graph, &mut visited, &graph.entry_point, "")?;
+        Ok(output)
+    }
+
     fn write_tree_recursive(
         &self,
         output: &mut String,

@@ -14,6 +14,23 @@ pub struct DependencyGraph {
     pub circular_deps: DashSet<PathBuf>,
 }
 
+impl serde::Serialize for DependencyGraph {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("DependencyGraph", 3)?;
+        state.serialize_field("entry_point", &self.entry_point)?;
+        state.serialize_field("adj_list", &self.adj_list)?;
+
+        // Convert DashSet to Vec for serialization
+        let circular_deps: Vec<PathBuf> = self.circular_deps.iter().map(|p| p.clone()).collect();
+        state.serialize_field("circular_deps", &circular_deps)?;
+        state.end()
+    }
+}
+
 impl DependencyGraph {
     pub fn new(entry_point: PathBuf) -> Self {
         Self {
