@@ -162,7 +162,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
             let formatter: Box<dyn output::OutputFormatter> = match format {
                 OutputFormat::Markdown => Box::new(output::MarkdownFormatter),
-                OutputFormat::Xml => unimplemented!("XML output is not supported yet"),
+                OutputFormat::Xml => {
+                    return Err(anyhow::anyhow!("XML output format is not yet supported"));
+                }
             };
 
             println!("✍️  Generating output...");

@@ -4,6 +4,7 @@ use anyhow::Result;
 use path_absolutize::Absolutize;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy)]
 pub struct JsResolver;
 
 impl JsResolver {
@@ -42,7 +43,24 @@ impl JsResolver {
     }
 
     fn is_external_package(&self, specifier: &str) -> bool {
-        !specifier.starts_with('.') && !specifier.starts_with('/')
+        // Relative paths are not external
+        if specifier.starts_with('.') || specifier.starts_with('/') {
+            return false;
+        }
+
+        // Path aliases from tsconfig/bundler config are not external
+        if self.is_configured_alias(specifier) {
+            return false;
+        }
+
+        // Everything else is treated as an external package
+        true
+    }
+
+    // Placeholder for a more sophisticated alias resolution
+    fn is_configured_alias(&self, _specifier: &str) -> bool {
+        // In the future, this would check tsconfig.json paths, etc.
+        false
     }
 
     async fn resolve_file_with_extensions(

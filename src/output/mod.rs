@@ -11,11 +11,15 @@ pub trait OutputFormatter: Send + Sync {
 pub struct MarkdownFormatter;
 
 impl MarkdownFormatter {
-    pub fn format_tree_only(&self, graph: &DependencyGraph) -> Result<String> {
+    fn render_tree(&self, graph: &DependencyGraph) -> Result<String> {
         let mut output = String::new();
         let mut visited = HashMap::new();
         self.write_tree_recursive(&mut output, graph, &mut visited, &graph.entry_point, "")?;
         Ok(output)
+    }
+
+    pub fn format_tree_only(&self, graph: &DependencyGraph) -> Result<String> {
+        self.render_tree(graph)
     }
 
     fn write_tree_recursive(
@@ -66,8 +70,7 @@ impl OutputFormatter for MarkdownFormatter {
 
         writeln!(output, "## Dependency Tree\n")?;
         writeln!(output, "```")?;
-        let mut visited = HashMap::new();
-        self.write_tree_recursive(&mut output, graph, &mut visited, &graph.entry_point, "")?;
+        write!(output, "{}", self.render_tree(graph)?)?;
         writeln!(output, "```\n")?;
 
         writeln!(output, "## File Contents\n")?;

@@ -7,6 +7,7 @@ use swc_ecma_ast::{CallExpr, ExportAll, ExportDecl, ImportDecl, Lit};
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
 use swc_ecma_visit::{VisitMut, VisitMutWith};
 
+#[derive(Clone, Copy)]
 pub struct JsParser;
 
 impl JsParser {

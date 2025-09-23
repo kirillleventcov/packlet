@@ -8,6 +8,7 @@ use parser::JsParser;
 use resolver::JsResolver;
 use std::path::Path;
 
+#[derive(Clone, Copy)]
 pub struct JsAdapter {
     parser: JsParser,
     resolver: JsResolver,
@@ -40,7 +41,11 @@ impl LanguageAdapter for JsAdapter {
         content: &str,
         _context: &AnalysisContext,
     ) -> Result<Vec<ImportStatement>> {
-        self.parser.parse(file_path, content)
+        let file_path = file_path.to_path_buf();
+        let content = content.to_string();
+        let parser = self.parser;
+
+        tokio::task::spawn_blocking(move || parser.parse(&file_path, &content)).await?
     }
 
     async fn resolve_import(

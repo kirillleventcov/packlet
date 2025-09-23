@@ -1,9 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use dashmap::DashMap;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
+use tokio::sync::Mutex;
 
 #[async_trait]
 pub trait FileSystemProvider: Send + Sync {
@@ -40,14 +42,14 @@ impl FileSystemProvider for LocalFileSystem {
 
 pub struct CachedFileSystem {
     inner: Box<dyn FileSystemProvider>,
-    cache: Arc<DashMap<PathBuf, String>>,
+    cache: Arc<Mutex<LruCache<PathBuf, String>>>,
 }
 
 impl CachedFileSystem {
     pub fn new(inner: Box<dyn FileSystemProvider>) -> Self {
         Self {
             inner,
-            cache: Arc::new(DashMap::new()),
+            cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(512).unwrap()))),
         }
     }
 }
@@ -55,11 +57,12 @@ impl CachedFileSystem {
 #[async_trait]
 impl FileSystemProvider for CachedFileSystem {
     async fn read_file(&self, path: &Path) -> Result<String> {
-        if let Some(content) = self.cache.get(path) {
+        let mut cache = self.cache.lock().await;
+        if let Some(content) = cache.get(path) {
             return Ok(content.clone());
         }
         let content = self.inner.read_file(path).await?;
-        self.cache.insert(path.to_path_buf(), content.clone());
+        cache.put(path.to_path_buf(), content.clone());
         Ok(content)
     }
 

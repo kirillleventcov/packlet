@@ -5,7 +5,7 @@ use futures::future::try_join_all;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 #[derive(Debug)]
 pub struct DependencyGraph {
@@ -57,6 +57,7 @@ pub struct DependencyTraverser {
     visited: Arc<DashSet<PathBuf>>,
     in_progress: Arc<DashSet<PathBuf>>,
     max_depth: Option<usize>,
+    semaphore: Arc<Semaphore>,
 }
 
 impl DependencyTraverser {
@@ -65,11 +66,17 @@ impl DependencyTraverser {
             visited: Arc::new(DashSet::new()),
             in_progress: Arc::new(DashSet::new()),
             max_depth: None,
+            semaphore: Arc::new(Semaphore::new(32)),
         }
     }
 
     pub fn with_max_depth(mut self, max_depth: Option<usize>) -> Self {
         self.max_depth = max_depth;
+        self
+    }
+
+    pub fn with_concurrency_limit(mut self, limit: usize) -> Self {
+        self.semaphore = Arc::new(Semaphore::new(limit));
         self
     }
 
@@ -84,7 +91,11 @@ impl DependencyTraverser {
         self.traverse_recursive(entry.to_path_buf(), adapter, context, graph.clone(), 0)
             .await?;
 
-        Ok(Arc::try_unwrap(graph).unwrap().into_inner())
+        Ok(Arc::try_unwrap(graph)
+            .map_err(|_| {
+                anyhow::anyhow!("Failed to unwrap Arc, graph is still referenced elsewhere")
+            })?
+            .into_inner())
     }
 
     async fn traverse_recursive(
@@ -101,6 +112,8 @@ impl DependencyTraverser {
             }
         }
 
+        let _permit = self.semaphore.acquire().await?;
+
         let canonical = context.fs.canonicalize(&file).await?;
         if self.visited.contains(&canonical) {
             return Ok(());
@@ -114,23 +127,10 @@ impl DependencyTraverser {
         self.visited.insert(canonical.clone());
         self.in_progress.insert(canonical.clone());
 
-        let adapter_clone = adapter.clone();
-        let context_clone = context.clone();
-        let canonical_clone = canonical.clone();
-
-        let result = tokio::task::spawn_blocking(move || {
-            let content =
-                futures::executor::block_on(context_clone.fs.read_file(&canonical_clone))?;
-            let imports = futures::executor::block_on(adapter_clone.parse_imports(
-                &canonical_clone,
-                &content,
-                &context_clone,
-            ))?;
-            Ok::<_, anyhow::Error>((content, imports))
-        })
-        .await??;
-
-        let (_content, imports) = result;
+        let content = context.fs.read_file(&canonical).await?;
+        let imports = adapter
+            .parse_imports(&canonical, &content, &context)
+            .await?;
 
         let mut tasks = Vec::new();
         for import in imports {
@@ -144,7 +144,6 @@ impl DependencyTraverser {
                         .await
                         .add_edge(&canonical, &resolved.path, import.clone());
 
-                    let _traverser = self.clone();
                     let adapter = adapter.clone();
                     let context = context.clone();
                     let graph = graph.clone();
