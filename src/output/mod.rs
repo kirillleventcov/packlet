@@ -5,11 +5,7 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 pub trait OutputFormatter: Send + Sync {
-    fn format(
-        &self,
-        graph: &DependencyGraph,
-        files: &HashMap<PathBuf, String>,
-    ) -> Result<String>;
+    fn format(&self, graph: &DependencyGraph, files: &HashMap<PathBuf, String>) -> Result<String>;
 }
 
 pub struct MarkdownFormatter;
@@ -40,7 +36,13 @@ impl MarkdownFormatter {
                 } else {
                     (format!("{}│   ", prefix), "├──")
                 };
-                self.write_tree_recursive(output, graph, visited, dep_path, &format!("{}{}", new_prefix, branch))?;
+                self.write_tree_recursive(
+                    output,
+                    graph,
+                    visited,
+                    dep_path,
+                    &format!("{}{}", new_prefix, branch),
+                )?;
             }
         }
         Ok(())
@@ -48,11 +50,7 @@ impl MarkdownFormatter {
 }
 
 impl OutputFormatter for MarkdownFormatter {
-    fn format(
-        &self,
-        graph: &DependencyGraph,
-        files: &HashMap<PathBuf, String>,
-    ) -> Result<String> {
+    fn format(&self, graph: &DependencyGraph, files: &HashMap<PathBuf, String>) -> Result<String> {
         let mut output = String::new();
 
         writeln!(output, "# Packlet Dependency Bundle\n")?;
@@ -67,7 +65,7 @@ impl OutputFormatter for MarkdownFormatter {
 
         writeln!(output, "## File Contents\n")?;
         let mut sorted_files: Vec<_> = files.iter().collect();
-        sorted_files.sort_by(|a,b| a.0.cmp(b.0));
+        sorted_files.sort_by(|a, b| a.0.cmp(b.0));
 
         for (path, content) in sorted_files {
             let lang = path.extension().and_then(|s| s.to_str()).unwrap_or("");

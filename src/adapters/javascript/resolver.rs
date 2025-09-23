@@ -32,7 +32,11 @@ impl JsResolver {
                 is_local: true,
             }))
         } else {
-            log::warn!("Could not resolve local import: '{}' from {}", specifier, from_file.display());
+            log::warn!(
+                "Could not resolve local import: '{}' from {}",
+                specifier,
+                from_file.display()
+            );
             Ok(None)
         }
     }
@@ -70,11 +74,12 @@ impl JsResolver {
                 }
             }
         }
-        
+
         // 4. Try parent path with extensions if original path had no extension
         if path.extension().is_none() {
-             for ext in extensions {
-                let new_path = PathBuf::from(format!("{}.{}", path.to_str().unwrap_or_default(), ext));
+            for ext in extensions {
+                let new_path =
+                    PathBuf::from(format!("{}.{}", path.to_str().unwrap_or_default(), ext));
                 if fs.exists(&new_path).await {
                     return Ok(Some(new_path));
                 }

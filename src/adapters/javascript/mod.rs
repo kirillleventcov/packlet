@@ -1,9 +1,7 @@
 mod parser;
 mod resolver;
 
-use crate::core::language::{
-    AnalysisContext, ImportStatement, LanguageAdapter, ResolvedImport,
-};
+use crate::core::language::{AnalysisContext, ImportStatement, LanguageAdapter, ResolvedImport};
 use anyhow::Result;
 use async_trait::async_trait;
 use parser::JsParser;

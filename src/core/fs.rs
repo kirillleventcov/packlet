@@ -32,7 +32,7 @@ impl FileSystemProvider for LocalFileSystem {
             false
         }
     }
-    
+
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         Ok(tokio::fs::canonicalize(path).await?)
     }
@@ -70,7 +70,7 @@ impl FileSystemProvider for CachedFileSystem {
     async fn is_directory(&self, path: &Path) -> bool {
         self.inner.is_directory(path).await
     }
-    
+
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         self.inner.canonicalize(path).await
     }

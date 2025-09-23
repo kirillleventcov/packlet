@@ -1,9 +1,9 @@
-use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
-use path_absolutize::Absolutize;
-use std::sync::Arc;
-use crate::{core, output};
 use crate::core::fs::FileSystemProvider;
+use crate::{core, output};
+use clap::{Parser, Subcommand, ValueEnum};
+use path_absolutize::Absolutize;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "packlet")]
@@ -30,7 +30,7 @@ pub enum Commands {
         #[arg(short, long, value_enum, default_value = "markdown")]
         format: OutputFormat,
 
-        /// Output file path (stdout if not specified)
+        /// Output file path (auto-generated if not specified)
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -79,21 +79,74 @@ pub enum GraphFormat {
     Json,
 }
 
+/// Generate a default output filename based on the input file and format
+fn generate_output_filename(input_file: &Path, format: OutputFormat) -> PathBuf {
+    // Get the input filename without extension
+    let stem = input_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+
+    // Determine the appropriate extension based on format
+    let extension = match format {
+        OutputFormat::Markdown => "md",
+        OutputFormat::Xml => "xml",
+    };
+
+    // Create the output filename with a "packlet" suffix to avoid conflicts
+    let filename = format!("{}.packlet.{}", stem, extension);
+
+    // Return as a PathBuf in the current directory
+    PathBuf::from(filename)
+}
+
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Bundle { file, format, output, max_depth, .. } => {
+        Commands::Bundle {
+            file,
+            format,
+            output,
+            max_depth,
+            ..
+        } => {
             let entry_file = file.absolutize()?.to_path_buf();
-            log::info!("Bundling {}...", entry_file.display());
 
-            let fs_provider = Arc::new(core::fs::CachedFileSystem::new(Box::new(core::fs::LocalFileSystem)));
-            
-            let extension = entry_file.extension().and_then(|s| s.to_str()).unwrap_or("");
-            let adapter = Arc::from(core::language::get_adapter_for_extension(extension)
-                .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {}", entry_file.display()))?);
+            // Determine the output path - either provided or auto-generated
+            let output_path = output.unwrap_or_else(|| generate_output_filename(&file, format));
 
-            let context = Arc::new(core::language::AnalysisContext { fs: fs_provider.clone() });
+            // Log what we're doing
+            log::info!(
+                "Bundling {} into {}...",
+                entry_file.display(),
+                output_path.display()
+            );
+
+            // Create a more user-friendly console message
+            println!("Bundling: {}", entry_file.display());
+            println!("Output format: {:?}", format);
+
+            let fs_provider = Arc::new(core::fs::CachedFileSystem::new(Box::new(
+                core::fs::LocalFileSystem,
+            )));
+
+            let extension = entry_file
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let adapter = Arc::from(
+                core::language::get_adapter_for_extension(extension).ok_or_else(|| {
+                    anyhow::anyhow!("Unsupported file type: {}", entry_file.display())
+                })?,
+            );
+
+            let context = Arc::new(core::language::AnalysisContext {
+                fs: fs_provider.clone(),
+            });
 
             let traverser = core::traverser::DependencyTraverser::new().with_max_depth(max_depth);
+
+            // Show progress indicator
+            println!("Analyzing dependencies...");
             let graph = traverser.traverse(&entry_file, adapter, context).await?;
 
             let mut file_contents = std::collections::HashMap::new();
@@ -106,6 +159,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             }
             files_to_read.sort();
             files_to_read.dedup();
+
+            // Show how many files we found
+            println!("Found {} local dependencies", files_to_read.len() - 1);
 
             for file_path in files_to_read {
                 if let Ok(content) = fs_provider.read_file(&file_path).await {
@@ -120,13 +176,23 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 OutputFormat::Xml => unimplemented!("XML output is not supported yet"),
             };
 
+            println!("✍️  Generating output...");
             let output_str = formatter.format(&graph, &file_contents)?;
 
-            if let Some(output_path) = output {
-                tokio::fs::write(output_path, output_str).await?;
-            } else {
-                println!("{}", output_str);
-            }
+            // Always write to a file
+            tokio::fs::write(&output_path, output_str).await?;
+
+            // Calculate file size for user feedback
+            let metadata = tokio::fs::metadata(&output_path).await?;
+            let size_kb = metadata.len() as f64 / 1024.0;
+
+            // Success message with file location and size
+            println!(
+                "Successfully created: {} ({:.2} KB)",
+                output_path.display(),
+                size_kb
+            );
+            println!("Tip: Use --output to specify a custom output location");
         }
         Commands::Analyze { file, .. } => {
             println!("Analyzing {}...", file.display());
