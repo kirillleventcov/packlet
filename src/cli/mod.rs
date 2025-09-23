@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use path_absolutize::Absolutize;
 use std::sync::Arc;
 use crate::{core, output};
+use crate::core::fs::FileSystemProvider;
 
 #[derive(Parser)]
 #[command(name = "packlet")]

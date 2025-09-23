@@ -1,4 +1,3 @@
-use crate::core::fs::FileSystemProvider;
 use crate::core::language::{AnalysisContext, ImportStatement, LanguageAdapter};
 use anyhow::Result;
 use dashmap::DashSet;
@@ -6,7 +5,7 @@ use futures::future::try_join_all;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct DependencyGraph {
@@ -41,7 +40,6 @@ pub struct DependencyTraverser {
     visited: Arc<DashSet<PathBuf>>,
     in_progress: Arc<DashSet<PathBuf>>,
     max_depth: Option<usize>,
-    parallel_limit: usize,
 }
 
 impl DependencyTraverser {
@@ -50,7 +48,6 @@ impl DependencyTraverser {
             visited: Arc::new(DashSet::new()),
             in_progress: Arc::new(DashSet::new()),
             max_depth: None,
-            parallel_limit: num_cpus::get(),
         }
     }
 
@@ -65,10 +62,9 @@ impl DependencyTraverser {
         adapter: Arc<dyn LanguageAdapter>,
         context: Arc<AnalysisContext>,
     ) -> Result<DependencyGraph> {
-        let semaphore = Arc::new(Semaphore::new(self.parallel_limit));
         let graph = Arc::new(Mutex::new(DependencyGraph::new(entry.to_path_buf())));
 
-        self.traverse_recursive(entry.to_path_buf(), adapter, context, graph.clone(), semaphore, 0)
+        self.traverse_recursive(entry.to_path_buf(), adapter, context, graph.clone(), 0)
             .await?;
 
         Ok(Arc::try_unwrap(graph).unwrap().into_inner())
@@ -80,7 +76,6 @@ impl DependencyTraverser {
         adapter: Arc<dyn LanguageAdapter>,
         context: Arc<AnalysisContext>,
         graph: Arc<Mutex<DependencyGraph>>,
-        semaphore: Arc<Semaphore>,
         depth: usize,
     ) -> Result<()> {
         if let Some(max) = self.max_depth {
@@ -102,45 +97,49 @@ impl DependencyTraverser {
         self.visited.insert(canonical.clone());
         self.in_progress.insert(canonical.clone());
 
-        let _permit = semaphore.acquire().await?;
+        let adapter_clone = adapter.clone();
+        let context_clone = context.clone();
+        let canonical_clone = canonical.clone();
 
-        let content = context.fs.read_file(&canonical).await?;
-        let imports = adapter.parse_imports(&canonical, &content, &context).await?;
+        let result = tokio::task::spawn_blocking(move || {
+            let content =
+                futures::executor::block_on(context_clone.fs.read_file(&canonical_clone))?;
+            let imports = futures::executor::block_on(adapter_clone.parse_imports(
+                &canonical_clone,
+                &content,
+                &context_clone,
+            ))?;
+            Ok::<_, anyhow::Error>((content, imports))
+        })
+        .await??;
+
+        let (_content, imports) = result;
 
         let mut tasks = Vec::new();
         for import in imports {
-            if let Some(resolved) = adapter.resolve_import(&import, &canonical, &context).await? {
+            if let Some(resolved) = adapter
+                .resolve_import(&import, &canonical, &context)
+                .await?
+            {
                 if resolved.is_local {
                     graph
                         .lock()
                         .await
                         .add_edge(&canonical, &resolved.path, import.clone());
 
-                    let traverser = self.clone();
+                    let _traverser = self.clone();
                     let adapter = adapter.clone();
                     let context = context.clone();
                     let graph = graph.clone();
-                    let semaphore = semaphore.clone();
-                    
-                    let task = tokio::spawn(async move {
-                        traverser.traverse_recursive(
-                            resolved.path,
-                            adapter,
-                            context,
-                            graph,
-                            semaphore,
-                            depth + 1,
-                        ).await
-                    });
+
+                    let task =
+                        self.traverse_recursive(resolved.path, adapter, context, graph, depth + 1);
                     tasks.push(task);
                 }
             }
         }
 
-        let results = try_join_all(tasks).await?;
-        for result in results {
-            result??;
-        }
+        try_join_all(tasks).await?;
 
         self.in_progress.remove(&canonical);
 
