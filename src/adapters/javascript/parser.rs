@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use swc_common::{SourceMap, SourceMapper, Span};
 use swc_ecma_ast::{CallExpr, ExportAll, ExportDecl, ImportDecl, Lit};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
+use swc_ecma_parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{VisitMut, VisitMutWith};
 
 #[derive(Clone, Copy)]
@@ -22,12 +22,9 @@ impl JsParser {
             content.to_string(),
         );
 
-        let lexer = Lexer::new(
-            Syntax::Typescript(Default::default()),
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
+        let syntax = syntax_for_file(file_path);
+
+        let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
 
         let mut parser = Parser::new_from(lexer);
         let module = parser
@@ -47,6 +44,35 @@ impl JsParser {
         module.visit_mut_with(&mut visitor);
 
         Ok(visitor.imports)
+    }
+}
+
+fn syntax_for_file(file_path: &Path) -> Syntax {
+    let is_d_ts = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.ends_with(".d.ts"))
+        .unwrap_or(false);
+
+    match file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("tsx") => Syntax::Typescript(TsSyntax {
+            tsx: true,
+            ..Default::default()
+        }),
+        Some("jsx") => Syntax::Es(EsSyntax {
+            jsx: true,
+            ..Default::default()
+        }),
+        Some("ts") => Syntax::Typescript(TsSyntax {
+            dts: is_d_ts,
+            ..Default::default()
+        }),
+        _ => Syntax::Typescript(TsSyntax::default()),
     }
 }
 

@@ -1,2 +1,8 @@
 /target
 test-suite
+
+# Added by Medle Agent
+/.medle
+/.vibe
+repomix.xml
+repomix-output.xml
