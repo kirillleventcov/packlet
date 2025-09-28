@@ -22,6 +22,26 @@ impl JsResolver {
             return Ok(None);
         }
 
+        if self.is_asset_import(specifier) {
+            let from_dir = from_file.parent().unwrap_or_else(|| Path::new("/"));
+            let asset_path = from_dir.join(specifier);
+
+            if fs.exists(&asset_path).await {
+                return Ok(Some(ResolvedImport {
+                    path: asset_path.absolutize()?.to_path_buf(),
+                    is_local: true,
+                    is_asset: true,
+                }));
+            }
+
+            log::debug!(
+                "Asset import '{}' from {} not found",
+                specifier,
+                from_file.display()
+            );
+            return Ok(None);
+        }
+
         let from_dir = from_file.parent().unwrap_or_else(|| Path::new("/"));
         let base_path = from_dir.join(specifier);
 
@@ -31,6 +51,7 @@ impl JsResolver {
             Ok(Some(ResolvedImport {
                 path: path.absolutize()?.to_path_buf(),
                 is_local: true,
+                is_asset: false,
             }))
         } else {
             log::warn!(
@@ -57,10 +78,59 @@ impl JsResolver {
         true
     }
 
-    // Placeholder for a more sophisticated alias resolution
-    fn is_configured_alias(&self, _specifier: &str) -> bool {
-        // In the future, this would check tsconfig.json paths, etc.
+    fn is_asset_import(&self, specifier: &str) -> bool {
+        const ASSET_EXTENSIONS: &[&str] = &[
+            "css", "scss", "sass", "less", "styl", "stylus", // Stylesheets
+            "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", // Images
+            "woff", "woff2", "ttf", "otf", "eot", // Fonts
+            "mp4", "webm", "ogg", "mp3", "wav", // Media
+            "pdf", "doc", "docx", "xls", "xlsx", // Documents
+            "json", "xml", "yaml", "yml", "toml", // Data files
+            "md", "mdx", // Markdown
+            "txt", "csv", // Text files
+        ];
+
+        // Get the file extension from the specifier
+        if let Some(extension) = Path::new(specifier)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase())
+        {
+            return ASSET_EXTENSIONS.contains(&extension.as_str());
+        }
+
+        // Check for special webpack/vite style imports
+        // e.g., import styles from './App.module.css'
+        if specifier.contains(".module.") {
+            return true;
+        }
+
+        // Check for query parameters that indicate asset handling
+        // e.g., import logo from './logo.svg?react'
+        if specifier.contains('?') {
+            let base = specifier.split('?').next().unwrap_or(specifier);
+            return self.is_asset_import(base);
+        }
+
         false
+    }
+
+    fn is_configured_alias(&self, specifier: &str) -> bool {
+        const COMMON_ALIASES: &[&str] = &[
+            "@/", // Common Vite/Next.js alias
+            "~/", // Common webpack alias
+            "@components/",
+            "@utils/",
+            "@assets/",
+            "@hooks/",
+            "@services/",
+            "@store/",
+            "@styles/",
+        ];
+
+        COMMON_ALIASES
+            .iter()
+            .any(|alias| specifier.starts_with(alias))
     }
 
     async fn resolve_file_with_extensions(
@@ -68,7 +138,7 @@ impl JsResolver {
         path: &Path,
         fs: &dyn FileSystemProvider,
     ) -> Result<Option<PathBuf>> {
-        let extensions = ["js", "ts", "jsx", "tsx", "json", "mjs", "cjs"];
+        let extensions = ["tsx", "ts", "jsx", "js", "mjs", "cjs", "json"];
 
         // 1. Try as a file with existing extension
         if fs.exists(path).await && !fs.is_directory(path).await {

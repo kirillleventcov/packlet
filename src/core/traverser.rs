@@ -12,6 +12,7 @@ pub struct DependencyGraph {
     pub entry_point: PathBuf,
     pub adj_list: HashMap<PathBuf, Vec<(PathBuf, ImportStatement)>>,
     pub circular_deps: DashSet<PathBuf>,
+    pub assets: DashSet<PathBuf>,
 }
 
 impl serde::Serialize for DependencyGraph {
@@ -20,13 +21,15 @@ impl serde::Serialize for DependencyGraph {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("DependencyGraph", 3)?;
+        let mut state = serializer.serialize_struct("DependencyGraph", 4)?;
         state.serialize_field("entry_point", &self.entry_point)?;
         state.serialize_field("adj_list", &self.adj_list)?;
 
-        // Convert DashSet to Vec for serialization
         let circular_deps: Vec<PathBuf> = self.circular_deps.iter().map(|p| p.clone()).collect();
+        let assets: Vec<PathBuf> = self.assets.iter().map(|p| p.clone()).collect();
+
         state.serialize_field("circular_deps", &circular_deps)?;
+        state.serialize_field("assets", &assets)?;
         state.end()
     }
 }
@@ -37,6 +40,7 @@ impl DependencyGraph {
             entry_point,
             adj_list: HashMap::new(),
             circular_deps: DashSet::new(),
+            assets: DashSet::new(),
         }
     }
 
@@ -50,6 +54,10 @@ impl DependencyGraph {
     pub fn mark_circular(&self, path: &Path) {
         self.circular_deps.insert(path.to_path_buf());
     }
+
+    pub fn add_asset(&self, path: &Path) {
+        self.assets.insert(path.to_path_buf());
+    }
 }
 
 #[derive(Clone)]
@@ -58,6 +66,7 @@ pub struct DependencyTraverser {
     in_progress: Arc<DashSet<PathBuf>>,
     max_depth: Option<usize>,
     semaphore: Arc<Semaphore>,
+    include_assets: bool,
 }
 
 impl DependencyTraverser {
@@ -67,6 +76,7 @@ impl DependencyTraverser {
             in_progress: Arc::new(DashSet::new()),
             max_depth: None,
             semaphore: Arc::new(Semaphore::new(32)),
+            include_assets: false,
         }
     }
 
@@ -77,6 +87,11 @@ impl DependencyTraverser {
 
     pub fn with_concurrency_limit(mut self, limit: usize) -> Self {
         self.semaphore = Arc::new(Semaphore::new(limit));
+        self
+    }
+
+    pub fn with_assets(mut self, include: bool) -> Self {
+        self.include_assets = include;
         self
     }
 
@@ -127,7 +142,24 @@ impl DependencyTraverser {
         self.visited.insert(canonical.clone());
         self.in_progress.insert(canonical.clone());
 
-        let content = context.fs.read_file(&canonical).await?;
+        if !adapter.can_parse_file(&canonical) {
+            log::debug!(
+                "Skipping non-parseable file: {} (not a JS/TS file)",
+                canonical.display()
+            );
+            self.in_progress.remove(&canonical);
+            return Ok(());
+        }
+
+        let content = match context.fs.read_file(&canonical).await {
+            Ok(content) => content,
+            Err(e) => {
+                log::warn!("Could not read file {}: {}", canonical.display(), e);
+                self.in_progress.remove(&canonical);
+                return Ok(());
+            }
+        };
+
         let imports = adapter
             .parse_imports(&canonical, &content, &context)
             .await?;
@@ -144,6 +176,16 @@ impl DependencyTraverser {
                         .await
                         .add_edge(&canonical, &resolved.path, import.clone());
 
+                    if resolved.is_asset {
+                        graph.lock().await.add_asset(&resolved.path);
+                        log::debug!(
+                            "Found asset dependency: {} -> {}",
+                            canonical.display(),
+                            resolved.path.display()
+                        );
+                        continue;
+                    }
+
                     let adapter = adapter.clone();
                     let context = context.clone();
                     let graph = graph.clone();
@@ -155,7 +197,12 @@ impl DependencyTraverser {
             }
         }
 
-        try_join_all(tasks).await?;
+        match try_join_all(tasks).await {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("Error traversing dependencies: {}", e);
+            }
+        }
 
         self.in_progress.remove(&canonical);
 
