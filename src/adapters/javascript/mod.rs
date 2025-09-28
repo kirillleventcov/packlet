@@ -1,5 +1,6 @@
 mod parser;
 mod resolver;
+mod tsconfig_parser;
 
 use crate::core::language::{AnalysisContext, ImportStatement, LanguageAdapter, ResolvedImport};
 use anyhow::Result;
@@ -8,7 +9,7 @@ use parser::JsParser;
 use resolver::JsResolver;
 use std::path::Path;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct JsAdapter {
     parser: JsParser,
     resolver: JsResolver,

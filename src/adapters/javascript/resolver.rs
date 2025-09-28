@@ -1,15 +1,21 @@
+use crate::adapters::javascript::tsconfig_parser::TsConfigParser;
 use crate::core::fs::FileSystemProvider;
 use crate::core::language::ResolvedImport;
 use anyhow::Result;
 use path_absolutize::Absolutize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-#[derive(Clone, Copy)]
-pub struct JsResolver;
+#[derive(Clone)]
+pub struct JsResolver {
+    tsconfig_parser: Arc<TsConfigParser>,
+}
 
 impl JsResolver {
     pub fn new() -> Self {
-        Self
+        Self {
+            tsconfig_parser: Arc::new(TsConfigParser::new()),
+        }
     }
 
     pub async fn resolve(
@@ -18,7 +24,7 @@ impl JsResolver {
         from_file: &Path,
         fs: &dyn FileSystemProvider,
     ) -> Result<Option<ResolvedImport>> {
-        if self.is_external_package(specifier) {
+        if self.is_external_package(specifier, from_file, fs).await? {
             return Ok(None);
         }
 
@@ -42,6 +48,38 @@ impl JsResolver {
             return Ok(None);
         }
 
+        if let Some(tsconfig) = self
+            .tsconfig_parser
+            .find_and_parse_config(from_file, fs)
+            .await?
+        {
+            if let Some(resolved_paths) = tsconfig.resolve_alias(specifier) {
+                for base_path in resolved_paths {
+                    if let Some(resolved) =
+                        self.resolve_file_with_extensions(&base_path, fs).await?
+                    {
+                        log::debug!(
+                            "Resolved alias '{}' to {} (from {})",
+                            specifier,
+                            resolved.display(),
+                            from_file.display()
+                        );
+                        return Ok(Some(ResolvedImport {
+                            path: resolved.absolutize()?.to_path_buf(),
+                            is_local: true,
+                            is_asset: false,
+                        }));
+                    }
+                }
+
+                log::warn!(
+                    "Alias '{}' matched pattern but no file found (from {})",
+                    specifier,
+                    from_file.display()
+                );
+            }
+        }
+
         let from_dir = from_file.parent().unwrap_or_else(|| Path::new("/"));
         let base_path = from_dir.join(specifier);
 
@@ -63,19 +101,31 @@ impl JsResolver {
         }
     }
 
-    fn is_external_package(&self, specifier: &str) -> bool {
-        // Relative paths are not external
+    async fn is_external_package(
+        &self,
+        specifier: &str,
+        from_file: &Path,
+        fs: &dyn FileSystemProvider,
+    ) -> Result<bool> {
         if specifier.starts_with('.') || specifier.starts_with('/') {
-            return false;
+            return Ok(false);
         }
 
-        // Path aliases from tsconfig/bundler config are not external
+        if let Some(tsconfig) = self
+            .tsconfig_parser
+            .find_and_parse_config(from_file, fs)
+            .await?
+        {
+            if tsconfig.resolve_alias(specifier).is_some() {
+                return Ok(false);
+            }
+        }
+
         if self.is_configured_alias(specifier) {
-            return false;
+            return Ok(false);
         }
 
-        // Everything else is treated as an external package
-        true
+        Ok(true)
     }
 
     fn is_asset_import(&self, specifier: &str) -> bool {
