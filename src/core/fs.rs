@@ -7,6 +7,24 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
 
+/// Find the git root directory by searching for .git folder
+pub async fn find_git_root(from: &Path) -> Option<PathBuf> {
+    let mut current = if from.is_dir() {
+        from.to_path_buf()
+    } else {
+        from.parent()?.to_path_buf()
+    };
+
+    loop {
+        let git_dir = current.join(".git");
+        if git_dir.exists() {
+            return Some(current);
+        }
+
+        current = current.parent()?.to_path_buf();
+    }
+}
+
 #[async_trait]
 pub trait FileSystemProvider: Send + Sync {
     async fn read_file(&self, path: &Path) -> Result<String>;

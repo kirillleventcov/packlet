@@ -168,7 +168,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             };
 
             println!("Generating output...");
-            let output_str = formatter.format(&graph, &file_contents)?;
+
+            // Find git root for relative path formatting
+            let git_root = core::fs::find_git_root(&entry_file).await;
+            let output_str =
+                formatter.format_with_git_root(&graph, &file_contents, git_root.as_deref())?;
 
             // Always write to a file
             tokio::fs::write(&output_path, output_str).await?;
@@ -188,7 +192,18 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Graph { file, format } => {
             let entry_file = file.absolutize()?.to_path_buf();
 
-            println!("Generating graph for {}...", entry_file.display());
+            // Find git root for relative path formatting
+            let git_root = core::fs::find_git_root(&entry_file).await;
+            let display_path = if let Some(ref root) = git_root {
+                entry_file
+                    .strip_prefix(root)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| entry_file.display().to_string())
+            } else {
+                entry_file.display().to_string()
+            };
+
+            println!("Generating graph for {}...", display_path);
 
             let fs_provider = Arc::new(core::fs::CachedFileSystem::new(Box::new(
                 core::fs::LocalFileSystem,
@@ -224,7 +239,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 GraphFormat::Dot => {
                     // Use the existing tree rendering logic from MarkdownFormatter
                     let formatter = output::MarkdownFormatter;
-                    let tree_output = formatter.format_tree_only(&graph)?;
+                    let tree_output =
+                        formatter.format_tree_only_with_git_root(&graph, git_root.as_deref())?;
                     println!("\n{}", tree_output);
                 }
                 GraphFormat::Json => {
