@@ -9,7 +9,7 @@ Packlet traverses your codebase starting from any JavaScript or TypeScript file,
 ## Installation
 
 ```bash
-cargo install packlet
+cargo install packlet # Currently not supported, kindly build from source
 ```
 
 Or build from source:
