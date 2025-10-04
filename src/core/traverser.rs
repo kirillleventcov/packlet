@@ -4,6 +4,7 @@ use dashmap::DashSet;
 use futures::future::try_join_all;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
@@ -64,7 +65,9 @@ impl DependencyGraph {
 pub struct DependencyTraverser {
     visited: Arc<DashSet<PathBuf>>,
     in_progress: Arc<DashSet<PathBuf>>,
-    max_depth: Option<usize>,
+    max_depth: usize,
+    max_files: usize,
+    file_count: Arc<AtomicUsize>,
     semaphore: Arc<Semaphore>,
     include_assets: bool,
 }
@@ -74,14 +77,21 @@ impl DependencyTraverser {
         Self {
             visited: Arc::new(DashSet::new()),
             in_progress: Arc::new(DashSet::new()),
-            max_depth: None,
+            max_depth: 50,
+            max_files: 10_000,
+            file_count: Arc::new(AtomicUsize::new(0)),
             semaphore: Arc::new(Semaphore::new(32)),
             include_assets: false,
         }
     }
 
     pub fn with_max_depth(mut self, max_depth: Option<usize>) -> Self {
-        self.max_depth = max_depth;
+        self.max_depth = max_depth.unwrap_or(50);
+        self
+    }
+
+    pub fn with_max_files(mut self, max_files: usize) -> Self {
+        self.max_files = max_files;
         self
     }
 
@@ -121,10 +131,27 @@ impl DependencyTraverser {
         graph: Arc<Mutex<DependencyGraph>>,
         depth: usize,
     ) -> Result<()> {
-        if let Some(max) = self.max_depth {
-            if depth >= max {
-                return Ok(());
-            }
+        if depth >= self.max_depth {
+            log::debug!("Max depth {} reached at {}", self.max_depth, file.display());
+            return Ok(());
+        }
+
+        // File count limit
+        let current_count = self.file_count.fetch_add(1, Ordering::Relaxed);
+        if current_count >= self.max_files {
+            log::warn!(
+                "Max file limit ({}) reached. Stopping traversal. Consider increasing --max-files or --max-depth.",
+                self.max_files
+            );
+            return Err(anyhow::anyhow!(
+                "File limit exceeded: {} files processed (limit: {})",
+                current_count + 1,
+                self.max_files
+            ));
+        }
+
+        if current_count > 0 && current_count % 1000 == 0 {
+            log::info!("Progress: {} files processed...", current_count);
         }
 
         let _permit = self.semaphore.acquire().await?;

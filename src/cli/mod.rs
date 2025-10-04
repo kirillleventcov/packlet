@@ -34,9 +34,17 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Maximum traversal depth
+        /// Maximum traversal depth (default: 50)
         #[arg(long)]
         max_depth: Option<usize>,
+
+        /// Maximum files to process (default: 10000)
+        #[arg(long)]
+        max_files: Option<usize>,
+
+        /// Timeout in seconds (default: 120)
+        #[arg(long)]
+        timeout: Option<u64>,
 
         /// Include only specific file extensions
         #[arg(long, value_delimiter = ',')]
@@ -53,6 +61,18 @@ pub enum Commands {
 
         #[arg(long, value_enum, default_value = "dot")]
         format: GraphFormat,
+
+        /// Maximum traversal depth (default: 50)
+        #[arg(long)]
+        max_depth: Option<usize>,
+
+        /// Maximum files to process (default: 10000)
+        #[arg(long)]
+        max_files: Option<usize>,
+
+        /// Timeout in seconds (default: 120)
+        #[arg(long)]
+        timeout: Option<u64>,
     },
 }
 
@@ -96,6 +116,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             format,
             output,
             max_depth,
+            max_files,
+            timeout,
             ..
         } => {
             let entry_file = file.absolutize()?.to_path_buf();
@@ -132,11 +154,25 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 fs: fs_provider.clone(),
             });
 
-            let traverser = core::traverser::DependencyTraverser::new().with_max_depth(max_depth);
+            let mut traverser =
+                core::traverser::DependencyTraverser::new().with_max_depth(max_depth);
 
-            // Show progress indicator
+            if let Some(max_files_limit) = max_files {
+                traverser = traverser.with_max_files(max_files_limit);
+            }
+
             println!("Analyzing dependencies...");
-            let graph = traverser.traverse(&entry_file, adapter, context).await?;
+
+            let timeout_duration = std::time::Duration::from_secs(timeout.unwrap_or(120));
+            let graph = tokio::time::timeout(
+                timeout_duration,
+                traverser.traverse(&entry_file, adapter, context)
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!(
+                "Traversal timeout after {} seconds. Try using --max-depth or --max-files to limit scope.",
+                timeout_duration.as_secs()
+            ))??;
 
             let mut file_contents = std::collections::HashMap::new();
             let mut files_to_read = vec![graph.entry_point.clone()];
@@ -189,7 +225,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             );
             println!("Tip: Use --output to specify a custom output location");
         }
-        Commands::Graph { file, format } => {
+        Commands::Graph {
+            file,
+            format,
+            max_depth,
+            max_files,
+            timeout,
+        } => {
             let entry_file = file.absolutize()?.to_path_buf();
 
             // Find git root for relative path formatting
@@ -223,10 +265,25 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 fs: fs_provider.clone(),
             });
 
-            let traverser = core::traverser::DependencyTraverser::new();
+            let mut traverser =
+                core::traverser::DependencyTraverser::new().with_max_depth(max_depth);
+
+            if let Some(max_files_limit) = max_files {
+                traverser = traverser.with_max_files(max_files_limit);
+            }
 
             println!("Analyzing dependencies...");
-            let graph = traverser.traverse(&entry_file, adapter, context).await?;
+
+            let timeout_duration = std::time::Duration::from_secs(timeout.unwrap_or(120));
+            let graph = tokio::time::timeout(
+                timeout_duration,
+                traverser.traverse(&entry_file, adapter, context)
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!(
+                "Traversal timeout after {} seconds. Try using --max-depth or --max-files to limit scope.",
+                timeout_duration.as_secs()
+            ))??;
 
             let dep_count = graph
                 .adj_list
