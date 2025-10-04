@@ -2,6 +2,12 @@
 name = "packlet"
 version = "0.1.1"
 edition = "2021"
+description = "A high-performance tool that bundles local code dependencies into a single markdown file by following import statements from an entry point"
+license = "MIT"
+repository = "https://github.com/kirillleventcov/packlet"
+readme = "README.md"
+keywords = ["bundler", "javascript", "typescript", "dependencies", "markdown"]
+categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
