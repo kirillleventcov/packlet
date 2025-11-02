@@ -28,7 +28,7 @@ pub struct CompilerOptions {
 pub struct TsConfig {
     pub base_url: Option<PathBuf>,
     pub paths: HashMap<String, Vec<String>>,
-    pub extends: Option<String>,
+    // pub extends: Option<String>,
     pub config_dir: PathBuf,
 }
 
@@ -195,7 +195,7 @@ impl TsConfigParser {
         let config = Arc::new(TsConfig {
             base_url,
             paths: all_paths,
-            extends: tsconfig_json.extends,
+            // extends: tsconfig_json.extends,
             config_dir: config_dir.clone(),
         });
 
@@ -360,16 +360,16 @@ mod tests {
             }
         }"#;
 
-        let expected = r#"{
-            
-            "compilerOptions": {
-                
-                "baseUrl": "./src", 
-                "paths": {
-                    "@/*": ["*"]
-                }
-            }
-        }"#;
+        // let expected = r#"{
+
+        //     "compilerOptions": {
+
+        //         "baseUrl": "./src",
+        //         "paths": {
+        //             "@/*": ["*"]
+        //         }
+        //     }
+        // }"#;
 
         let result = TsConfigParser::strip_json_comments(input);
         let parsed: Result<TsConfigJson, _> = serde_json::from_str(&result);
@@ -388,7 +388,7 @@ mod tests {
                 ),
                 ("utils".to_string(), vec!["utils/index.ts".to_string()]),
             ]),
-            extends: None,
+            // extends: None,
             config_dir: PathBuf::from("/project"),
         };
 

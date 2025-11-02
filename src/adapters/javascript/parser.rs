@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
 use swc_common::{SourceMap, SourceMapper, Span};
-use swc_ecma_ast::{CallExpr, ExportAll, ExportDecl, ImportDecl, Lit};
+use swc_ecma_ast::{ArrowExpr, BlockStmtOrExpr, CallExpr, ExportAll, ExportDecl, ImportDecl, Lit};
 use swc_ecma_parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{VisitMut, VisitMutWith};
 
@@ -92,6 +92,43 @@ impl ImportVisitor {
             raw: self.source_map.span_to_snippet(span).unwrap_or_default(),
         });
     }
+
+    /// Extracts dynamic import from arrow function (for React.lazy patterns)
+    fn extract_import_from_arrow(&self, arrow: &ArrowExpr) -> Option<String> {
+        match &*arrow.body {
+            // Arrow function with expression body: () => import('./Component')
+            BlockStmtOrExpr::Expr(expr) => {
+                if let Some(call_expr) = expr.as_call() {
+                    if call_expr.callee.is_import() && call_expr.args.len() == 1 {
+                        if let Some(lit) = call_expr.args[0].expr.as_lit() {
+                            if let Lit::Str(s) = lit {
+                                return Some(s.value.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            // Arrow function with block body: () => { return import('./Component') }
+            BlockStmtOrExpr::BlockStmt(block) => {
+                for stmt in &block.stmts {
+                    if let Some(return_stmt) = stmt.as_return_stmt() {
+                        if let Some(arg) = &return_stmt.arg {
+                            if let Some(call_expr) = arg.as_call() {
+                                if call_expr.callee.is_import() && call_expr.args.len() == 1 {
+                                    if let Some(lit) = call_expr.args[0].expr.as_lit() {
+                                        if let Lit::Str(s) = lit {
+                                            return Some(s.value.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 impl VisitMut for ImportVisitor {
@@ -134,12 +171,42 @@ impl VisitMut for ImportVisitor {
     }
 
     fn visit_mut_call_expr(&mut self, n: &mut CallExpr) {
+        // Handle require() calls
         if let Some(ident) = n.callee.as_expr().and_then(|e| e.as_ident()) {
             if ident.sym.as_ref() == "require" && n.args.len() == 1 {
                 if let Some(lit) = n.args[0].expr.as_lit() {
                     if let Lit::Str(s) = lit {
                         let specifier = s.value.to_string();
                         self.add_import(specifier, ImportKind::CommonJs, n.span);
+                    }
+                }
+            }
+        }
+
+        // Handle React.lazy(() => import(...)) patterns
+        if let Some(member) = n.callee.as_expr().and_then(|e| e.as_member()) {
+            // Check if it's React.lazy or lazy from 'react'
+            let is_react_lazy = if let Some(obj) = member.obj.as_ident() {
+                obj.sym.as_ref() == "React"
+                    && member.prop.as_ident().map(|i| i.sym.as_ref()) == Some("lazy")
+            } else {
+                false
+            };
+
+            if is_react_lazy && n.args.len() >= 1 {
+                if let Some(arrow) = n.args[0].expr.as_arrow() {
+                    if let Some(specifier) = self.extract_import_from_arrow(arrow) {
+                        self.add_import(specifier, ImportKind::Dynamic, n.span);
+                    }
+                }
+            }
+        }
+
+        if let Some(ident) = n.callee.as_expr().and_then(|e| e.as_ident()) {
+            if ident.sym.as_ref() == "lazy" && n.args.len() >= 1 {
+                if let Some(arrow) = n.args[0].expr.as_arrow() {
+                    if let Some(specifier) = self.extract_import_from_arrow(arrow) {
+                        self.add_import(specifier, ImportKind::Dynamic, n.span);
                     }
                 }
             }

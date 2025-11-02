@@ -61,6 +61,7 @@ impl FileSystemProvider for LocalFileSystem {
 pub struct CachedFileSystem {
     inner: Box<dyn FileSystemProvider>,
     cache: Arc<Mutex<LruCache<PathBuf, String>>>,
+    canonical_cache: Arc<Mutex<LruCache<PathBuf, PathBuf>>>,
 }
 
 impl CachedFileSystem {
@@ -68,6 +69,8 @@ impl CachedFileSystem {
         Self {
             inner,
             cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(512).unwrap()))),
+            // Canonical cache - larger since it's just paths, not file contents
+            canonical_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(2048).unwrap()))),
         }
     }
 }
@@ -93,6 +96,18 @@ impl FileSystemProvider for CachedFileSystem {
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        self.inner.canonicalize(path).await
+        let mut cache = self.canonical_cache.lock().await;
+
+        if let Some(canonical) = cache.get(path) {
+            return Ok(canonical.clone());
+        }
+
+        drop(cache); // Release lock before async call
+        let canonical = self.inner.canonicalize(path).await?;
+
+        let mut cache = self.canonical_cache.lock().await;
+        cache.put(path.to_path_buf(), canonical.clone());
+
+        Ok(canonical)
     }
 }

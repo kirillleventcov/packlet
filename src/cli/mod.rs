@@ -73,6 +73,10 @@ pub enum Commands {
         /// Timeout in seconds (default: 120)
         #[arg(long)]
         timeout: Option<u64>,
+
+        /// Exclude patterns (gitignore syntax)
+        #[arg(long, value_delimiter = ',')]
+        exclude: Option<Vec<String>>,
     },
 }
 
@@ -118,6 +122,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             max_depth,
             max_files,
             timeout,
+            exclude,
             ..
         } => {
             let entry_file = file.absolutize()?.to_path_buf();
@@ -159,6 +164,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
             if let Some(max_files_limit) = max_files {
                 traverser = traverser.with_max_files(max_files_limit);
+            }
+
+            if let Some(exclude_patterns) = exclude {
+                traverser = traverser.with_exclude_patterns(exclude_patterns);
             }
 
             println!("Analyzing dependencies...");
@@ -231,6 +240,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             max_depth,
             max_files,
             timeout,
+            exclude,
         } => {
             let entry_file = file.absolutize()?.to_path_buf();
 
@@ -270,6 +280,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
             if let Some(max_files_limit) = max_files {
                 traverser = traverser.with_max_files(max_files_limit);
+            }
+
+            if let Some(exclude_patterns) = exclude {
+                traverser = traverser.with_exclude_patterns(exclude_patterns);
             }
 
             println!("Analyzing dependencies...");

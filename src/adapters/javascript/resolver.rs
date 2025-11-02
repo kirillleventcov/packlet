@@ -107,10 +107,53 @@ impl JsResolver {
         from_file: &Path,
         fs: &dyn FileSystemProvider,
     ) -> Result<bool> {
+        // Quick check: obvious external packages
+        if specifier.starts_with("node_modules/") {
+            return Ok(true);
+        }
+
+        // Check for known React/JS ecosystem externals first (performance optimization)
+        const KNOWN_EXTERNALS: &[&str] = &[
+            "react",
+            "react-dom",
+            "react-router",
+            "react-router-dom",
+            "redux",
+            "@reduxjs/",
+            "@mui/",
+            "@material-ui/",
+            "@emotion/",
+            "@testing-library/",
+            "axios",
+            "lodash",
+            "lodash-es",
+            "@tanstack/",
+            "framer-motion",
+            "@radix-ui/",
+            "next/",
+            "vue",
+            "svelte",
+            "@angular/",
+            "@types/",
+            "typescript",
+            "vite",
+            "webpack",
+            "rollup",
+        ];
+
+        if KNOWN_EXTERNALS
+            .iter()
+            .any(|&ext| specifier.starts_with(ext))
+        {
+            return Ok(true);
+        }
+
+        // Relative or absolute paths are local
         if specifier.starts_with('.') || specifier.starts_with('/') {
             return Ok(false);
         }
 
+        // Check tsconfig path aliases
         if let Some(tsconfig) = self
             .tsconfig_parser
             .find_and_parse_config(from_file, fs)
@@ -121,10 +164,27 @@ impl JsResolver {
             }
         }
 
+        // Check common configured aliases
         if self.is_configured_alias(specifier) {
             return Ok(false);
         }
 
+        // Check if resolved path would enter node_modules
+        // This catches cases like: import something from '../../node_modules/...'
+        let from_dir = from_file.parent().unwrap_or_else(|| Path::new("/"));
+        let potential_path = from_dir.join(specifier);
+
+        if potential_path.components().any(|c| {
+            if let std::path::Component::Normal(name) = c {
+                name == "node_modules"
+            } else {
+                false
+            }
+        }) {
+            return Ok(true);
+        }
+
+        // Default: bare specifiers without aliases are external packages
         Ok(true)
     }
 
